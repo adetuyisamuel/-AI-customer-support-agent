@@ -1,0 +1,354 @@
+{
+  "name": "AI Customer Support Agent — n8n",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "support-agent",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "node-0001",
+      "name": "Webhook — Receive Message",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "support-agent"
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "customerName",
+              "value": "={{ $json.body.name || 'Customer' }}"
+            },
+            {
+              "name": "customerEmail",
+              "value": "={{ $json.body.email || '' }}"
+            },
+            {
+              "name": "customerMessage",
+              "value": "={{ $json.body.message || '' }}"
+            },
+            {
+              "name": "channel",
+              "value": "={{ $json.body.channel || 'website' }}"
+            },
+            {
+              "name": "receivedAt",
+              "value": "={{ $now.toISO() }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-0002",
+      "name": "Set — Map Input Data",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 1,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "apiKey",
+        "resource": "chat",
+        "operation": "complete",
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4o",
+          "mode": "list"
+        },
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "You are a helpful customer support agent. Answer questions clearly and professionally based only on the knowledge base below. If the question is outside the knowledge base or too complex, respond with exactly this JSON: {\"escalate\": true, \"reason\": \"one sentence reason\"}. Otherwise respond with: {\"escalate\": false, \"answer\": \"your answer here\", \"category\": \"billing|technical|general|returns|shipping\"}.\n\nKNOWLEDGE BASE:\n---\nBusiness hours: Monday to Friday, 9am to 5pm.\nSupport email: support@yourbusiness.com\nPhone: +1 800 123 4567\nRefund policy: Full refund within 30 days of purchase with proof of purchase.\nShipping: Standard 3-5 business days. Express 1-2 business days.\nPricing: Starter plan $49/month. Pro plan $99/month. Enterprise — contact sales.\nCommon issue — login: Clear browser cache and cookies, then try again. If problem persists contact support.\nCommon issue — billing: Invoices are sent on the 1st of each month. Update payment details in account settings.\nCommon issue — cancellation: Cancel anytime in account settings under Subscription. No cancellation fees.\n---\n\nAlways be warm, concise, and helpful. Never make up information not in the knowledge base."
+            },
+            {
+              "role": "user",
+              "content": "=Customer name: {{ $json.customerName }}\nCustomer message: {{ $json.customerMessage }}"
+            }
+          ]
+        },
+        "options": {
+          "temperature": 0.3,
+          "maxTokens": 800
+        }
+      },
+      "id": "node-0003",
+      "name": "OpenAI — Generate Response",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.first().json.message.content;\nlet cleaned = raw.trim();\nif (cleaned.startsWith('```')) {\n  cleaned = cleaned.replace(/```json/g, '').replace(/```/g, '').trim();\n}\ntry {\n  const parsed = JSON.parse(cleaned);\n  return [{ json: { ...parsed, rawResponse: raw, parseSuccess: true } }];\n} catch(e) {\n  return [{ json: { escalate: true, reason: 'Response parse error', rawResponse: raw, parseSuccess: false, error: e.message } }];\n}"
+      },
+      "id": "node-0004",
+      "name": "Code — Parse GPT Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.escalate }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "node-0005",
+      "name": "IF — Needs Escalation?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Set — Map Input Data').item.json.customerEmail }}",
+        "subject": "=Re: Your support enquiry",
+        "emailType": "html",
+        "message": "=<p>Hi {{ $('Set — Map Input Data').item.json.customerName }},</p><p>Thanks for reaching out! Here's what I found for you:</p><p>{{ $json.answer }}</p><p>If this doesn't fully answer your question, just reply to this email and our team will be happy to help further.</p><br><p>Best regards,<br>Support Team<br>[Your Business Name]</p>",
+        "options": {}
+      },
+      "id": "node-0006",
+      "name": "Gmail — Send AI Answer",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [1340, 180]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Support Tickets",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Timestamp": "={{ $('Set — Map Input Data').item.json.receivedAt }}",
+            "Customer Name": "={{ $('Set — Map Input Data').item.json.customerName }}",
+            "Email": "={{ $('Set — Map Input Data').item.json.customerEmail }}",
+            "Message": "={{ $('Set — Map Input Data').item.json.customerMessage }}",
+            "Channel": "={{ $('Set — Map Input Data').item.json.channel }}",
+            "Category": "={{ $json.category }}",
+            "AI Answer": "={{ $json.answer }}",
+            "Escalated": "No",
+            "Status": "Resolved by AI"
+          }
+        },
+        "options": {}
+      },
+      "id": "node-0007",
+      "name": "Sheets — Log Resolved Ticket",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [1560, 180]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Support Tickets",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Timestamp": "={{ $('Set — Map Input Data').item.json.receivedAt }}",
+            "Customer Name": "={{ $('Set — Map Input Data').item.json.customerName }}",
+            "Email": "={{ $('Set — Map Input Data').item.json.customerEmail }}",
+            "Message": "={{ $('Set — Map Input Data').item.json.customerMessage }}",
+            "Channel": "={{ $('Set — Map Input Data').item.json.channel }}",
+            "Category": "escalation",
+            "AI Answer": "",
+            "Escalated": "Yes",
+            "Escalation Reason": "={{ $json.reason }}",
+            "Status": "Pending Human Review"
+          }
+        },
+        "options": {}
+      },
+      "id": "node-0008",
+      "name": "Sheets — Log Escalated Ticket",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [1340, 420]
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "#support-escalations",
+          "mode": "name"
+        },
+        "text": "=*Support Escalation Required*\n\n*Customer:* {{ $('Set — Map Input Data').item.json.customerName }}\n*Email:* {{ $('Set — Map Input Data').item.json.customerEmail }}\n*Channel:* {{ $('Set — Map Input Data').item.json.channel }}\n*Message:* {{ $('Set — Map Input Data').item.json.customerMessage }}\n\n*Reason for escalation:* {{ $json.reason }}\n*Received at:* {{ $('Set — Map Input Data').item.json.receivedAt }}\n\nPlease respond within 2 hours.",
+        "otherOptions": {}
+      },
+      "id": "node-0009",
+      "name": "Slack — Escalation Alert",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2,
+      "position": [1560, 420]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $('Set — Map Input Data').item.json.customerEmail }}",
+        "subject": "=Re: Your support enquiry — We're on it",
+        "emailType": "html",
+        "message": "=<p>Hi {{ $('Set — Map Input Data').item.json.customerName }},</p><p>Thanks for reaching out. Your message has been received and passed to our support team who will get back to you within 2 business hours.</p><p>We appreciate your patience.</p><br><p>Best regards,<br>Support Team<br>[Your Business Name]</p>",
+        "options": {}
+      },
+      "id": "node-0010",
+      "name": "Gmail — Send Escalation Acknowledgement",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2,
+      "position": [1780, 420]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ success: true, escalated: $('IF — Needs Escalation?').item.json.escalate, message: $('IF — Needs Escalation?').item.json.escalate ? 'Ticket escalated to human agent' : 'Query resolved by AI' }) }}",
+        "options": {}
+      },
+      "id": "node-0011",
+      "name": "Respond — Webhook Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [460, 500]
+    }
+  ],
+  "connections": {
+    "Webhook — Receive Message": {
+      "main": [
+        [
+          {
+            "node": "Set — Map Input Data",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Respond — Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set — Map Input Data": {
+      "main": [
+        [
+          {
+            "node": "OpenAI — Generate Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI — Generate Response": {
+      "main": [
+        [
+          {
+            "node": "Code — Parse GPT Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code — Parse GPT Response": {
+      "main": [
+        [
+          {
+            "node": "IF — Needs Escalation?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF — Needs Escalation?": {
+      "main": [
+        [
+          {
+            "node": "Sheets — Log Escalated Ticket",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Gmail — Send AI Answer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail — Send AI Answer": {
+      "main": [
+        [
+          {
+            "node": "Sheets — Log Resolved Ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sheets — Log Escalated Ticket": {
+      "main": [
+        [
+          {
+            "node": "Slack — Escalation Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack — Escalation Alert": {
+      "main": [
+        [
+          {
+            "node": "Gmail — Send Escalation Acknowledgement",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "staticData": null,
+  "tags": ["portfolio", "AI", "customer-support", "automation", "GPT"],
+  "triggerCount": 1,
+  "updatedAt": "2026-04-05T00:00:00.000Z",
+  "versionId": "1"
+}
